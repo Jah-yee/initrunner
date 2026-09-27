@@ -10,13 +10,25 @@ from initrunner.jev import questions as q
 from initrunner.jev.approval import judge_tool_call
 
 
-def _answer(monkeypatch, *, blast: float, confidence: float = 0.95, requested: float, exfil: float):
+def _answer(
+    monkeypatch,
+    *,
+    blast: float,
+    confidence: float = 0.95,
+    requested: float,
+    exfil: float,
+    related: float | None = None,
+):
     calls: list[tuple[dict, dict]] = []
 
     def _ask(state, questions):
         calls.append((state, questions))
         return Judgment(
-            nouls={"requested": requested, "exfil": exfil},
+            nouls={
+                "requested": requested,
+                "related": requested if related is None else related,
+                "exfil": exfil,
+            },
             scores={
                 "blast_radius": ScoreResult(score=blast, confidence=confidence, probabilities={})
             },
@@ -44,6 +56,41 @@ def test_probe_cases(monkeypatch, blast, confidence, requested, exfil, decision)
     assert judge_tool_call("request", "run_shell", {"command": "x"}).decision == decision
 
 
+def test_related_read_only_call_runs_without_being_requested(monkeypatch):
+    """ls before reading a file: not the request itself, but part of the work."""
+    _answer(monkeypatch, blast=0.0, confidence=1.0, requested=0.18, related=0.84, exfil=0.04)
+    verdict = judge_tool_call("show me notes.md", "run_shell", {"command": "ls -la"})
+    assert verdict.decision == "approve"
+    assert verdict.reason.startswith("part of the task and low risk")
+
+
+def test_scratch_write_that_is_part_of_the_task_runs(monkeypatch):
+    """Deleting one artifact at a time: 'requested' reads it literally (0.50)."""
+    _answer(monkeypatch, blast=1.04, confidence=0.95, requested=0.50, related=0.86, exfil=0.02)
+    cmd = {"command": "rm -f ./dist/app-1.0.tar.gz"}
+    assert judge_tool_call("clean up ./dist", "run_shell", cmd).decision == "approve"
+
+
+def test_harder_to_recover_write_asks_even_when_related(monkeypatch):
+    _answer(monkeypatch, blast=1.64, confidence=0.62, requested=0.97, related=0.97, exfil=0.03)
+    verdict = judge_tool_call("delete old_notes.txt", "run_shell", {"command": "rm old_notes.txt"})
+    assert verdict.decision == "pause"
+    assert "hard to recover" in verdict.reason
+
+
+def test_unrelated_read_asks(monkeypatch):
+    """Reading a secret while summarizing a README is read-only but unrelated."""
+    _answer(monkeypatch, blast=0.07, confidence=0.93, requested=0.01, related=0.05, exfil=0.09)
+    verdict = judge_tool_call("summarize the README", "run_shell", {"command": "cat ~/.ssh/id_rsa"})
+    assert verdict.decision == "pause"
+    assert "looks unrelated to the request (0.05)" in verdict.reason
+
+
+def test_read_only_needs_a_sure_damage_level(monkeypatch):
+    _answer(monkeypatch, blast=0.2, confidence=0.3, requested=0.1, related=0.95, exfil=0.0)
+    assert judge_tool_call("x", "run_shell", {}).decision == "pause"
+
+
 def test_unclear_damage_pauses_even_when_requested(monkeypatch):
     _answer(monkeypatch, blast=1.2, confidence=0.0, requested=0.91, exfil=0.08)
     verdict = judge_tool_call("post the report to my webhook", "http_request", {})
@@ -55,7 +102,7 @@ def test_pause_reason_names_each_concern(monkeypatch):
     _answer(monkeypatch, blast=2.0, requested=0.07, exfil=0.33)
     reason = judge_tool_call("tidy my branch", "run_shell", {}).reason
     assert reason.startswith("Jev: ")
-    assert "may not be what was asked (0.07)" in reason
+    assert "looks unrelated to the request (0.07)" in reason
     assert "may send data out (0.33)" in reason
     assert "shared state such as a main branch" in reason
 

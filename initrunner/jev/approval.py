@@ -1,10 +1,10 @@
 """Judge one tool call: run it, deny it, or pause for a human.
 
-Jev answers three questions about the call (damage, whether it was asked for,
-whether it sends data out). The decision is made here, in code, against the
-thresholds in :mod:`initrunner.jev.questions`, so the rule is readable and
-tunable. Raises :class:`~initrunner.jev.JevError` when no judgment comes back;
-the caller pauses.
+Jev answers four questions about the call (damage, whether it was asked for,
+whether it is part of the work at all, whether it sends data out). The decision
+is made here, in code, against the thresholds in :mod:`initrunner.jev.questions`,
+so the rule is readable and tunable. Raises :class:`~initrunner.jev.JevError`
+when no judgment comes back; the caller pauses.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ class ApprovalVerdict:
     blast_radius: float
     blast_confidence: float
     requested: float
+    related: float
     exfil: float
     judgment: dict[str, Any] = field(default_factory=dict)
 
@@ -35,6 +36,7 @@ class ApprovalVerdict:
             "blast_radius": round(self.blast_radius, 4),
             "blast_confidence": round(self.blast_confidence, 4),
             "requested": round(self.requested, 4),
+            "related": round(self.related, 4),
             "exfil": round(self.exfil, 4),
             "judgment": self.judgment,
         }
@@ -59,10 +61,15 @@ def judge_tool_call(user_request: str, tool: str, tool_args: dict[str, Any]) -> 
     judgment = jev.ask(state, q.approval())
     blast = judgment.scores["blast_radius"]
     requested = judgment.nouls["requested"]
+    related = judgment.nouls["related"]
     exfil = judgment.nouls["exfil"]
+    sure_of_blast = blast.confidence >= q.APPROVAL_AUTO_BLAST_CONFIDENCE
 
     level = q.BLAST_LEVELS[min(round(blast.score), len(q.BLAST_LEVELS) - 1)]
-    facts = f"blast {blast.score:.2f}, requested {requested:.2f}, sends data out {exfil:.2f}"
+    facts = (
+        f"blast {blast.score:.2f}, related {related:.2f}, requested {requested:.2f}, "
+        f"sends data out {exfil:.2f}"
+    )
 
     decision: Decision
     if requested < q.APPROVAL_DENY_UNREQUESTED and (
@@ -72,18 +79,18 @@ def judge_tool_call(user_request: str, tool: str, tool_args: dict[str, Any]) -> 
         why = "sends local data out" if exfil >= q.APPROVAL_DENY_EXFIL else level.rstrip(".")
         reason = f"not requested and {why[0].lower()}{why[1:]} ({facts})"
     elif (
-        requested >= q.APPROVAL_AUTO_REQUESTED
+        related >= q.APPROVAL_AUTO_RELATED
         and exfil < q.APPROVAL_AUTO_EXFIL_MAX
         and blast.score <= q.APPROVAL_AUTO_BLAST_MAX
-        and blast.confidence >= q.APPROVAL_AUTO_BLAST_CONFIDENCE
+        and sure_of_blast
     ):
         decision = "approve"
-        reason = f"requested and low risk ({facts})"
+        reason = f"part of the task and low risk ({facts})"
     else:
         decision = "pause"
         concerns = []
-        if requested < q.APPROVAL_AUTO_REQUESTED:
-            concerns.append(f"may not be what was asked ({requested:.2f})")
+        if related < q.APPROVAL_AUTO_RELATED:
+            concerns.append(f"looks unrelated to the request ({related:.2f})")
         if exfil >= q.APPROVAL_AUTO_EXFIL_MAX:
             concerns.append(f"may send data out ({exfil:.2f})")
         if blast.score > q.APPROVAL_AUTO_BLAST_MAX:
@@ -98,6 +105,7 @@ def judge_tool_call(user_request: str, tool: str, tool_args: dict[str, Any]) -> 
         blast_radius=blast.score,
         blast_confidence=blast.confidence,
         requested=requested,
+        related=related,
         exfil=exfil,
         judgment=judgment.to_dict(),
     )
