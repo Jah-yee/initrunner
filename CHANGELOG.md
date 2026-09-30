@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026.9.4] - 2026-09-30
+
+### Security
+- **Bumped `urllib3` 2.7.0 to 2.8.0 (CVE-2026-97687, CVE-2026-97689, CVE-2026-97688).** The first let an HTTPS proxy ignore or override its TLS configuration. The second let `HTTPResponse.stream()` and `read_chunked()` buffer a chunk-size line of unbounded length. The third let chunked Deflate streaming spin. `urllib3` arrives through `requests`, which `tiktoken` pulls in under `pydantic-ai`. InitRunner's own HTTP clients use httpx. `pip-audit` flagged these while this release was being prepared; no code-scanning alert existed for them yet. 2.8.0 also stops applying a destination's client certificate and hostname check to the HTTPS proxy connection. Nothing in this repo sets that up.
+- **Bumped `pyjwt` 2.13.0 to 2.15.1.** Closes the ten open code-scanning alerts on `uv.lock`. All ten are fixed in 2.14.0, and the lockfile moved to the current release. 2.13.0 treated a public key as an HMAC secret when the PEM had extra whitespace or odd line endings (CVE-2026-102268, critical). The same confusion applied to a public JWK, a JWKS, a DER key, and a BOM-prefixed key (CVE-2026-102273, CVE-2026-102271, CVE-2026-102272). `PyJWK` accepted an empty HMAC key (CVE-2026-102266). `PyJWKClient` followed redirects while fetching a JWKS (CVE-2026-102267) and refetched the set for every unknown key id (CVE-2026-101917). A deeply nested header raised an uncaught `RecursionError` (CVE-2026-102265), a non-canonical signature segment could miss a raw-token denylist (CVE-2026-102269), and one malformed key failed the whole JWK set parse (CVE-2026-102274). 2.15.0 wraps the same class of recursion on a nested payload and skips a bad set member, and 2.15.1 again accepts the trailing Base64URL padding that AWS ALB tokens carry. `pyjwt[crypto]` is a transitive dependency of the `mcp` extra. InitRunner does not import it.
+
+### Dependencies
+- **Bumped dashboard frontend dependencies:** `@sveltejs/vite-plugin-svelte` to 7.3.1 and `svelte` to 5.57.1 (#279); `vite` to 8.3.1 (#280); `posthog-js` to 1.435.3 (Dependabot #281 asked for 1.434.13; the `^1.434.13` range resolved 1.435.3); `@xyflow/svelte` to 1.7.0 (#282); `bits-ui` to 2.19.3 (#283). `svelte`, the Vite plugin, and `vite` are build-time. `bits-ui`, `@xyflow/svelte`, and `posthog-js` ship in the compiled dashboard.
+
 ## [2026.9.3] - 2026-09-27
 
 ### Added
