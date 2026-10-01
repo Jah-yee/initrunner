@@ -84,8 +84,13 @@ def build_python_toolset(config: PythonToolConfig, ctx: ToolBuildContext) -> Fun
         code_file = Path(work_dir) / "_run.py"
         code_file.write_text(code, encoding="utf-8")
 
-        env: dict[str, str] = {}
+        # When network_disabled, NullBackend.run does:
+        #   run_env = dict(scrub_env()); run_env.update(env={})  → proxy vars remain
+        # Fix: pass env=None so NullBackend skips the update and uses scrub_env() directly.
+        # Additionally set no_proxy=* to prevent any residual proxy use.
+        env: dict[str, str] | None = None
         if config.network_disabled:
+            env = {}
             for key in _PROXY_ENV_KEYS:
                 env.pop(key, None)
             env["no_proxy"] = "*"

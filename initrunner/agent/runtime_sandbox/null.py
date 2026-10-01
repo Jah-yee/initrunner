@@ -8,6 +8,16 @@ from typing import Literal
 
 from initrunner.agent._subprocess import scrub_env
 from initrunner.agent.runtime_sandbox.base import SandboxResult, _timed_subprocess
+
+# Proxy env keys to strip when network isolation is requested
+_PROXY_KEYS = (
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+)
 from initrunner.agent.schema.security import BindMount
 
 
@@ -46,7 +56,7 @@ class NullBackend:
         argv: list[str],
         *,
         stdin: bytes | None = None,
-        env: Mapping[str, str],
+        env: Mapping[str, str] | None,
         cwd: Path,
         timeout: float,
         extra_mounts: Sequence[BindMount] = (),
@@ -54,8 +64,19 @@ class NullBackend:
         memory_limit: str | None = None,
         cpu_limit: float | None = None,
     ) -> SandboxResult:
-        run_env = dict(scrub_env())
-        run_env.update(env)
+        if env is None:
+            # Start from scrubbed env but strip proxy vars for network isolation.
+            # This gives a clean-but-functional environment: HOME/USER PATH are kept
+            # (needed for Python to work), but HTTP_PROXY etc. are removed so they
+            # cannot bypass the network-disabled audit hook.
+            run_env = dict(scrub_env())
+            for k in _PROXY_KEYS:
+                run_env.pop(k, None)
+            run_env["no_proxy"] = "*"
+            run_env["NO_PROXY"] = "*"
+        else:
+            run_env = dict(scrub_env())
+            run_env.update(env)
         translated = [_translate_path(arg, cwd, extra_mounts) for arg in argv]
         return _timed_subprocess(
             translated,
