@@ -210,12 +210,17 @@ def build_a2a_app(
     api_key: str | None = None,
     cors_origins: list[str] | None = None,
     skills: list[ResolvedSkill] | None = None,
+    max_bytes: int = 1_048_576,
 ) -> Starlette:
     """Build a Starlette app that speaks A2A 1.0 JSON-RPC."""
     from functools import partial
 
     from starlette.middleware import Middleware
+    from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.middleware.cors import CORSMiddleware
+    from starlette.responses import JSONResponse
+
+    from initrunner.middleware import make_body_size_dispatch
 
     executor = InitRunnerAgentExecutor(
         agent=agent,
@@ -235,7 +240,23 @@ def build_a2a_app(
         agent_card=card,
     )
 
+    def _a2a_error_response(status_code: int, message: str) -> JSONResponse:
+        return JSONResponse(
+            {"error": {"message": message, "code": status_code}},
+            status_code=status_code,
+        )
+
     middleware: list[Middleware] = []
+
+    middleware.append(
+        Middleware(
+            BaseHTTPMiddleware,  # type: ignore[arg-type]
+            dispatch=make_body_size_dispatch(
+                max_bytes=max_bytes,
+                error_response=_a2a_error_response,
+            ),
+        )
+    )
 
     if cors_origins:
         middleware.append(
@@ -248,19 +269,10 @@ def build_a2a_app(
         )
 
     if api_key:
-        from starlette.middleware.base import BaseHTTPMiddleware
-        from starlette.responses import JSONResponse
-
         from initrunner.middleware import (
             all_paths_predicate,
             make_auth_dispatch,
         )
-
-        def _a2a_error_response(status_code: int, message: str) -> JSONResponse:
-            return JSONResponse(
-                {"error": {"message": message, "code": status_code}},
-                status_code=status_code,
-            )
 
         middleware.append(
             Middleware(

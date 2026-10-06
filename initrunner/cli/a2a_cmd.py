@@ -132,5 +132,6 @@ def a2a_serve(
             api_key=api_key,
             cors_origins=cors_origin,
             skills=resolved_skills,
+            max_bytes=role.spec.security.server.max_request_body_bytes,
         )
         run_a2a_server(a2a_app, host=host, port=port)
